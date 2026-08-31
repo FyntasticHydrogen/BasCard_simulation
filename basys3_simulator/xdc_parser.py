@@ -33,8 +33,7 @@ BASYS3_PIN_MAP = {
 
     # 7-Segment Cathodes
     "W7":  "CA",   "W6":  "CB",   "V8":  "CC",   "U8":  "CD",
-    "V5":  "CE",   "U5":  "CF",   "V7":  "CG",   "V14_DP": "DP",
-    "M6":  "DP",   "L3":  "DP"
+    "V5":  "CE",   "U5":  "CF",   "V7":  "CG",   "M6":  "DP"
 }
 
 
@@ -49,6 +48,38 @@ class XDCParser:
         # Maps hardware component name to user top-level port name
         self.hardware_to_port: Dict[str, str] = {}
 
+        # Pre-populate default Basys 3 standard port naming conventions
+        self._init_default_mappings()
+
+    def _init_default_mappings(self):
+        """Pre-populates standard Basys3 port names (sw[0]..sw[15], led[0]..led[15], etc.)."""
+        for i in range(16):
+            self.port_to_hardware[f"sw[{i}]"] = f"SW{i}"
+            self.port_to_hardware[f"sw{i}"] = f"SW{i}"
+            self.port_to_hardware[f"SW[{i}]"] = f"SW{i}"
+            self.port_to_hardware[f"SW{i}"] = f"SW{i}"
+
+            self.port_to_hardware[f"led[{i}]"] = f"LED{i}"
+            self.port_to_hardware[f"led{i}"] = f"LED{i}"
+            self.port_to_hardware[f"LED[{i}]"] = f"LED{i}"
+            self.port_to_hardware[f"LED{i}"] = f"LED{i}"
+
+        for btn in ["btnC", "btnU", "btnD", "btnL", "btnR", "BTNC", "BTNU", "BTND", "BTNL", "BTNR"]:
+            self.port_to_hardware[btn] = btn.upper()
+
+        self.port_to_hardware["clk"] = "CLK"
+        self.port_to_hardware["CLK"] = "CLK"
+
+        for i in range(4):
+            self.port_to_hardware[f"an[{i}]"] = f"AN{i}"
+            self.port_to_hardware[f"an{i}"] = f"AN{i}"
+
+        seg_names = ["CA", "CB", "CC", "CD", "CE", "CF", "CG", "DP"]
+        for idx, seg in enumerate(seg_names):
+            self.port_to_hardware[f"seg[{idx}]"] = seg
+            self.port_to_hardware[f"seg{idx}"] = seg
+            self.port_to_hardware[seg.lower()] = seg
+
     def parse_file(self, filepath: str) -> None:
         """Reads and parses an XDC file."""
         with open(filepath, 'r', encoding='utf-8', errors='ignore') as f:
@@ -57,8 +88,6 @@ class XDCParser:
 
     def parse_string(self, content: str) -> None:
         """Parses XDC text content."""
-        # Regex for matching set_property PACKAGE_PIN <pin> [get_ports {<port>}]
-        # Handles single port names, indexed port names like sw[0], led[15], etc.
         pattern = re.compile(
             r'set_property\s+PACKAGE_PIN\s+([A-Z0-9]+)\s+\[\s*get_ports\s+\{?([A-Za-z0-9_\[\]]+)\}?\s*\]',
             re.IGNORECASE
@@ -83,7 +112,6 @@ class XDCParser:
         """Returns the hardware element (e.g. 'SW0', 'LED1') for a given HDL port name."""
         if port_name in self.port_to_hardware:
             return self.port_to_hardware[port_name]
-        # Direct match check (e.g. if port is named 'sw[0]' or 'SW0')
         cleaned = port_name.upper().replace("[", "").replace("]", "")
         if cleaned in BASYS3_PIN_MAP.values():
             return cleaned

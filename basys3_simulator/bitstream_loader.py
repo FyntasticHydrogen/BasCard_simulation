@@ -21,14 +21,18 @@ class BitstreamLoader:
         if ext == ".bit" or ext == ".bin":
             return self.load_bitstream(filepath)
         elif ext == ".v" or ext == ".sv":
-            return self.load_verilog(filepath)
+            res = self.load_verilog(filepath)
+            self.engine.port_map = self.xdc_parser.port_to_hardware
+            return res
         elif ext == ".xdc":
             self.xdc_parser.parse_file(filepath)
             self.engine.port_map = self.xdc_parser.port_to_hardware
             return True
         else:
             # Try reading as Verilog / netlist text
-            return self.load_verilog(filepath)
+            res = self.load_verilog(filepath)
+            self.engine.port_map = self.xdc_parser.port_to_hardware
+            return res
 
     def load_bitstream(self, filepath: str) -> bool:
         """
@@ -60,6 +64,7 @@ class BitstreamLoader:
                 # Configure default passthrough (SW0..SW15 -> LED0..LED15) and DFF clocking
                 self._configure_default_bitstream_behavior()
 
+            self.engine.port_map = self.xdc_parser.port_to_hardware
             return True
         except Exception as e:
             print(f"Error loading bitstream: {e}")
@@ -69,13 +74,14 @@ class BitstreamLoader:
         """Parses Xilinx `.bit` header fields (Design name, Part name, Date, Time, Bitstream Length)."""
         info = {}
         idx = 0
-        # Check standard header prefix (0x0009 0x0fF00F...)
+        # Standard Xilinx header prefix starts at byte 13 (after 0x0009 ... length fields)
         if len(data) > 13 and data[0:2] == b'\x00\x09':
             idx = 13
-            while idx < len(data) - 4:
-                key = chr(data[idx])
-                idx += 1
-                if key in ['a', 'b', 'c', 'd', 'e']:
+            while idx < len(data) - 2:
+                key_byte = data[idx:idx+1]
+                if key_byte in [b'a', b'b', b'c', b'd', b'e']:
+                    key = key_byte.decode('latin-1')
+                    idx += 1
                     length = int.from_bytes(data[idx:idx+2], byteorder='big')
                     idx += 2
                     val = data[idx:idx+length].decode('latin-1', errors='ignore').rstrip('\x00')
@@ -113,8 +119,6 @@ class BitstreamLoader:
         for match in assign_pattern.finditer(content):
             lhs = match.group(1).strip()
             rhs = match.group(2).strip()
-
-            # Parse expression
             self._add_expression_logic(lhs, rhs)
 
         # 2. Parse structural gate primitives (e.g., and g1(led[0], sw[0], sw[1]); or not n1(y, a);)
@@ -127,18 +131,17 @@ class BitstreamLoader:
                 inputs = ports[1:]
                 self.engine.add_gate(gtype, [output], inputs)
 
-        # 3. Parse simple always @(posedge clk) blocks for D Flip-Flops
+        # 3. Parse always @(posedge clk) blocks for D Flip-Flops
         always_pattern = re.compile(
-            r'always\s*@\s*\(\s*posedge\s+([A-Za-z0-9_]+)\s*\)\s*begin?\s*([^end]+)\s*end?',
+            r'always\s*@\s*\(\s*posedge\s+([A-Za-z0-9_]+)\s*\)\s*(?:begin)?\s*(.*?)\s*(?:end)?(?=always|endmodule|$)',
             re.IGNORECASE | re.DOTALL
         )
         for match in always_pattern.finditer(content):
-            clk_signal = match.group(1)
+            clk_signal = match.group(1).strip()
             block = match.group(2)
-            # Find non-blocking assignments: q <= d;
             dff_matches = re.findall(r'([A-Za-z0-9_\[\]]+)\s*<=\s*([A-Za-z0-9_\[\]]+)\s*;', block)
             for q_out, d_in in dff_matches:
-                self.engine.add_dff(d_in, clk_signal, q_out)
+                self.engine.add_dff(d_in.strip(), clk_signal, q_out.strip())
 
         return True
 

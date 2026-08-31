@@ -63,16 +63,17 @@ class SimulationEngine:
             dff.state = 0
             dff.last_clk = 0
 
-    def set_input(self, hw_name: str, value: int):
-        """Sets hardware input state (e.g. SW0 = 1)."""
+    def set_input(self, name: str, value: int):
+        """Sets input state by hardware name (e.g. SW0) or port name (e.g. sw0)."""
         value = 1 if value else 0
-        self.inputs[hw_name] = value
-        self.signals[hw_name] = value
 
-        # Also update connected ports if mapping exists
-        for port, hw in self.port_map.items():
-            if hw == hw_name:
-                self.signals[port] = value
+        # Check if mapped to hardware
+        hw_target = self.port_map.get(name, name)
+        if hw_target in self.inputs:
+            self.inputs[hw_target] = value
+
+        self.signals[name] = value
+        self.signals[hw_target] = value
 
     def get_output(self, hw_name: str) -> int:
         """Gets hardware output state."""
@@ -86,15 +87,15 @@ class SimulationEngine:
 
     def update_signals(self):
         """Propagates signal values through gates and registers."""
-        # 1. Map HW inputs to port signals
+        # 1. Update signals from HW inputs
+        for hw_name, val in self.inputs.items():
+            self.signals[hw_name] = val
+
+        # Map HW inputs to connected HDL port names
         for port, hw in self.port_map.items():
             if hw in self.inputs:
+                # Keep port signal in sync with HW input
                 self.signals[port] = self.inputs[hw]
-
-        # Direct connection default if no port map
-        for hw_name, val in self.inputs.items():
-            if hw_name not in self.signals:
-                self.signals[hw_name] = val
 
         # 2. Custom callback evaluation if registered
         if self.eval_callback:
@@ -144,7 +145,6 @@ class SimulationEngine:
                         res ^= v
                     out_val = 1 - res
                 elif gate.type == "LUT":
-                    # gate.param is integer mask/init string
                     bit_idx = 0
                     for idx, val in enumerate(in_vals):
                         if val:
